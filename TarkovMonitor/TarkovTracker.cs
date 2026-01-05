@@ -49,21 +49,91 @@ namespace TarkovMonitor
         static TarkovTracker() {
             tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(Properties.Settings.Default.tarkovTrackerTokens) ?? tokens;
         }
+        internal class CurlTarkovTrackerAPI : ITarkovTrackerAPI
+        {
+            private readonly string baseUrl;
+
+            public CurlTarkovTrackerAPI(string domain)
+            {
+                baseUrl = $"https://{domain}/api/v2";
+            }
+
+            private async Task<string> CurlGet(string path, string token)
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "curl.exe",
+                    Arguments =
+                        $"-s " +
+                        $"-H \"Authorization: Bearer {token}\" " +
+                        $"-H \"User-Agent: TarkovMonitor\" " +
+                        $"\"{baseUrl}{path}\"",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var p = Process.Start(psi);
+                string output = await p.StandardOutput.ReadToEndAsync();
+                p.WaitForExit();
+                return output;
+            }
+
+            private async Task<string> CurlPost(string path, string token, string json)
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "curl.exe",
+                    Arguments =
+                        $"-s -X POST " +
+                        $"-H \"Authorization: Bearer {token}\" " +
+                        $"-H \"Content-Type: application/json\" " +
+                        $"-H \"User-Agent: TarkovMonitor\" " +
+                        $"-d \"{json.Replace("\"", "\\\"")}\" " +
+                        $"\"{baseUrl}{path}\"",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var p = Process.Start(psi);
+                string output = await p.StandardOutput.ReadToEndAsync();
+                p.WaitForExit();
+                return output;
+            }
+
+            public async Task<TokenResponse> TestToken(string token)
+            {
+                var json = await CurlGet("/token", token);
+                return JsonSerializer.Deserialize<TokenResponse>(json);
+            }
+
+            public async Task<ProgressResponse> GetProgress()
+            {
+                var json = await CurlGet("/progress", TarkovTracker.GetToken(TarkovTracker.CurrentProfileId));
+                return JsonSerializer.Deserialize<ProgressResponse>(json);
+            }
+
+            public async Task<string> SetTaskStatus(string id, TaskStatusBody body)
+            {
+                var json = JsonSerializer.Serialize(body);
+                return await CurlPost($"/progress/task/{id}", TarkovTracker.GetToken(TarkovTracker.CurrentProfileId), json);
+            }
+
+            public async Task<string> SetTaskStatuses(List<TaskStatusBody> body)
+            {
+                var json = JsonSerializer.Serialize(body);
+                return await CurlPost("/progress/tasks", TarkovTracker.GetToken(TarkovTracker.CurrentProfileId), json);
+            }
+        }
+
 
         public static ITarkovTrackerAPI InitAPI()
         {
-            api = RestService.For<ITarkovTrackerAPI>($"https://{Properties.Settings.Default.tarkovTrackerDomain}/api/v2",
-                new RefitSettings {
-                    AuthorizationHeaderValueGetter = (rq, cr) => {
-                        return Task.Run<string>(() => {
-                            return GetToken(currentProfile ?? "");
-                        });
-                    },
-                }
-            );
-            api.Client.DefaultRequestHeaders.UserAgent.TryParseAdd($"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name} {System.Reflection.Assembly.GetExecutingAssembly().GetName().Version}");
+            api = new CurlTarkovTrackerAPI(Properties.Settings.Default.tarkovTrackerDomain);
             return api;
         }
+
 
         public static string GetToken(string profileId)
         {
