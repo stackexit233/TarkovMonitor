@@ -11,7 +11,6 @@ namespace TarkovMonitor
     {
         internal interface ITarkovTrackerAPI
         {
-            HttpClient Client { get; }
 
             [Get("/token")]
             [Headers("Authorization: Bearer {token}")]
